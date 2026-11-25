@@ -148,8 +148,8 @@ class _Empty extends StatelessWidget {
                   style: TextStyle(color: p.text, fontSize: 28, fontWeight: FontWeight.w800, height: 1.2)),
               const SizedBox(height: 12),
               Text(
-                'Pick a folder or album. Swipe through it three times. '
-                'What is left is your final set.',
+                'Pick a folder or album. Swipe through it three times, '
+                'or keep going until you stop. What is left is your final set.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: p.muted, fontSize: 16, height: 1.45),
               ),
@@ -174,9 +174,12 @@ class _ProjectCard extends StatelessWidget {
   String get _status {
     if (project.items.isEmpty) return 'No images';
     final r = project.currentRound;
-    if (r == kDoneRound) return 'Done · ${plural(project.picks.length, 'pick')}';
-    if (r > project.startedRound) return 'Round $r is ready';
-    return 'Round $r';
+    final picks = plural(project.picks.length, 'pick');
+    if (project.roundsOver) return 'Done · $picks';
+    if (project.stopped) return 'Stopped in round $r · $picks';
+    final mode = project.isEndless ? ' · Endless' : '';
+    if (r > project.startedRound) return 'Round $r is ready$mode';
+    return 'Round $r$mode';
   }
 
   Future<void> _rename(BuildContext context) async {

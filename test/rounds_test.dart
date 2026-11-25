@@ -47,8 +47,11 @@ void main() {
 
     // Round 3: reject 15.
     playRound(p, (i) => i.id <= 75 ? Decision.reject : Decision.keep);
-    expect(p.currentRound, kDoneRound);
+    expect(p.currentRound, 4);
+    expect(p.roundsOver, isTrue);
     expect(p.isDone, isTrue);
+    expect(() => p.decide(p.pool(4).first, 4, Decision.keep), throwsArgumentError,
+        reason: 'a classic project has no round 4');
     expect(p.picks.length, 175 + 10);
     expect(p.picks.where((i) => i.isSuperLike).length, 10);
   });
@@ -124,6 +127,106 @@ void main() {
     expect(q.sort, SortMode.nameDesc);
     expect(q.sources.single.bookmark, 'abc');
     expect(q.items.length, 6);
+  });
+
+  group('endless', () {
+    Project endless(int n) => makeProject(n)..maxRounds = null;
+
+    test('rounds go on while images are kept', () {
+      final p = endless(100);
+      playRound(p, (i) => i.id <= 5 ? Decision.superLike : i.id <= 60 ? Decision.keep : Decision.reject);
+      for (var r = 2; r <= 6; r++) {
+        expect(p.currentRound, r);
+        expect(p.isDone, isFalse);
+        // Each round passes the 5 lowest ids still in the pool.
+        final cut = p.pool(r).map((i) => i.id).reduce((a, b) => a < b ? a : b) + 5;
+        playRound(p, (i) => i.id < cut ? Decision.reject : Decision.keep);
+      }
+      expect(p.currentRound, 7);
+      expect(p.pool(7).length, 55 - 25);
+      expect(p.picks.length, 30 + 5);
+      expect(p.itemById(60)!.decisions.length, 6);
+      expect(p.itemById(60)!.at(6), Decision.keep);
+      expect(p.lastSwipedRound, 6);
+    });
+
+    test('keeping every image starts the same set again', () {
+      final p = endless(3);
+      playRound(p, (_) => Decision.keep);
+      playRound(p, (_) => Decision.keep);
+      playRound(p, (_) => Decision.keep);
+      expect(p.currentRound, 4);
+      expect(p.remaining(4).length, 3);
+      expect(p.isDone, isFalse);
+    });
+
+    test('stop mid-round: picks are the kept and not yet swiped images; continue goes back', () {
+      final p = endless(6);
+      playRound(p, (i) => i.id == 1 ? Decision.superLike : Decision.keep);
+      final r2 = p.remaining(2);
+      p.decide(r2[0], 2, Decision.reject);
+      p.decide(r2[1], 2, Decision.keep);
+      p.stop();
+      expect(p.isDone, isTrue);
+      expect(p.canContinue, isTrue);
+      expect(p.picks.length, 1 + 4, reason: '1 Super Like + 1 kept + 3 not swiped');
+      expect(p.picks, isNot(contains(r2[0])));
+
+      final q = Project.fromJson(p.toJson());
+      expect(q.stopped, isTrue);
+      expect(q.isEndless, isTrue);
+      expect(q.picks.length, 5);
+
+      p.resume();
+      expect(p.isDone, isFalse);
+      expect(p.currentRound, 2);
+      expect(p.remaining(2).length, 3);
+    });
+
+    test('undo after stop takes back the swipe and continues', () {
+      final p = endless(3);
+      p.decide(p.remaining(1).first, 1, Decision.keep);
+      p.stop();
+      p.undo();
+      expect(p.stopped, isFalse);
+      expect(p.remaining(1).length, 3);
+    });
+
+    test('all passed ends Endless with nothing to continue', () {
+      final p = endless(3);
+      playRound(p, (_) => Decision.keep);
+      playRound(p, (_) => Decision.reject);
+      expect(p.isDone, isTrue);
+      expect(p.picks, isEmpty);
+      expect(p.canContinue, isFalse);
+    });
+
+    test('a finished classic project can keep going as Endless', () {
+      final p = makeProject(10);
+      playRound(p, (i) => i.id <= 8 ? Decision.keep : Decision.reject);
+      playRound(p, (i) => i.id <= 6 ? Decision.keep : Decision.reject);
+      playRound(p, (i) => i.id <= 5 ? Decision.keep : Decision.reject);
+      expect(p.isDone, isTrue);
+      expect(p.canContinue, isTrue);
+      p.makeEndless();
+      expect(p.isDone, isFalse);
+      expect(p.currentRound, 4);
+      expect(p.remaining(4).length, 5);
+      playRound(p, (i) => i.id <= 2 ? Decision.keep : Decision.reject);
+      expect(p.currentRound, 5);
+      expect(p.picks.map((i) => i.id), [1, 2]);
+      final q = Project.fromJson(p.toJson());
+      expect(q.isEndless, isTrue);
+      expect(q.itemById(1)!.at(4), Decision.keep);
+      expect(q.currentRound, 5);
+    });
+
+    test('old project files load as classic', () {
+      final j = makeProject(2).toJson()..remove('rounds')..remove('stopped');
+      final q = Project.fromJson(j);
+      expect(q.maxRounds, kClassicRounds);
+      expect(q.stopped, isFalse);
+    });
   });
 
   group('sorting', () {

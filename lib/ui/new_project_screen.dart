@@ -141,6 +141,31 @@ class _NewProjectScreenState extends State<NewProjectScreen> {
                           ),
                         ),
                         const SizedBox(height: 24),
+                        Text('ROUNDS',
+                            style: TextStyle(
+                                color: p.muted, fontSize: 12.5, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: SegmentedButton<bool>(
+                            showSelectedIcon: false,
+                            segments: const [
+                              ButtonSegment(value: false, label: Text('3 rounds'), icon: Icon(Icons.looks_3_outlined)),
+                              ButtonSegment(value: true, label: Text('Endless'), icon: Icon(Icons.all_inclusive_rounded)),
+                            ],
+                            selected: {_draft.isEndless},
+                            onSelectionChanged: (v) =>
+                                setState(() => _draft.maxRounds = v.first ? null : kClassicRounds),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _draft.isEndless
+                              ? 'Rounds go on until you tap Stop. Then you see what is left.'
+                              : 'Three rounds. What you keep in round 3 is final. You can keep going after.',
+                          style: TextStyle(color: p.muted, fontSize: 13),
+                        ),
+                        const SizedBox(height: 24),
                         Text('ADD IMAGES FROM',
                             style: TextStyle(
                                 color: p.muted, fontSize: 12.5, fontWeight: FontWeight.w700, letterSpacing: 0.8)),

@@ -165,4 +165,86 @@ void main() {
     expect(project.itemById(3)!.decisions[0], Decision.superLike);
     await store.flush();
   });
+
+  testWidgets('Endless: rounds go on, Stop shows the picks, Continue goes back', (t) async {
+    project.maxRounds = null;
+    t.view.physicalSize = const Size(1179, 2556);
+    t.view.devicePixelRatio = 3;
+    addTearDown(t.view.reset);
+
+    await t.pumpWidget(ImageDateApp(store: store, library: Library(store)));
+    await settle(t);
+    expect(find.text('Round 1 is ready · Endless'), findsOneWidget);
+    await t.tap(find.text('Walls'));
+    await settle(t);
+    expect(find.text('ENDLESS'), findsOneWidget);
+    await t.tap(find.text('Start'));
+    await settle(t);
+    expect(find.byTooltip('Super Like: keep for sure, skip all later rounds (↑)'), findsOneWidget);
+
+    for (var i = 0; i < 3; i++) {
+      await t.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await settle(t);
+    }
+    expect(find.text('Round 2'), findsOneWidget);
+    expect(find.textContaining('You kept every image in round 1.'), findsOneWidget);
+    await t.tap(find.text('Start'));
+    await settle(t);
+
+    // Pass wall1, then keep wall2, then stop with the flag button.
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await settle(t);
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await settle(t);
+    await t.tap(find.byTooltip('Stop and review (S)'));
+    await settle(t);
+    expect(project.stopped, isTrue);
+    expect(find.text('2 picks'), findsOneWidget);
+    expect(find.text('Stopped in round 2 · 1 not swiped yet'), findsOneWidget);
+
+    await t.tap(find.text('Continue round 2'));
+    await settle(t);
+    expect(project.stopped, isFalse);
+    expect(find.byType(SwipeDeck), findsOneWidget);
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await settle(t);
+
+    // Round 3 and beyond: no limit. S stops from the round screen too.
+    expect(find.text('Round 3'), findsOneWidget);
+    await t.tap(find.text('Start'));
+    await settle(t);
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await settle(t);
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await settle(t);
+    expect(find.text('Round 4'), findsOneWidget);
+    await t.sendKeyEvent(LogicalKeyboardKey.keyS);
+    await settle(t);
+    expect(find.text('2 picks'), findsOneWidget);
+    expect(find.text('Continue round 4'), findsNothing);
+    expect(find.text('Start round 4'), findsOneWidget);
+    await store.flush();
+  });
+
+  testWidgets('a finished 3-round project can keep going', (t) async {
+    t.view.physicalSize = const Size(1179, 2556);
+    t.view.devicePixelRatio = 3;
+    addTearDown(t.view.reset);
+    for (final i in project.items) {
+      i.decisions.setAll(0, [Decision.keep, Decision.keep, Decision.keep]);
+    }
+    project.startedRound = 3;
+
+    await t.pumpWidget(ImageDateApp(store: store, library: Library(store)));
+    await settle(t);
+    expect(find.text('Done · 3 picks'), findsOneWidget);
+    await t.tap(find.text('Walls'));
+    await settle(t);
+    await t.tap(find.text('Keep going · round 4'));
+    await settle(t);
+    expect(project.isEndless, isTrue);
+    expect(find.text('Round 4'), findsOneWidget);
+    expect(find.text('ENDLESS'), findsOneWidget);
+    await store.flush();
+  });
 }

@@ -9,8 +9,9 @@ import 'app_scope.dart';
 import 'info_sheet.dart';
 import 'theme.dart';
 
-/// The end of a project: the final picks. This is the "cleaned out" folder:
-/// only the images that passed all three rounds (or got a Super Like).
+/// The end of a project, or a stop: the picks. This is the "cleaned out"
+/// folder: only the images still in the running (and the Super Likes).
+/// From here the user can continue the rounds, or keep going (Endless).
 class ResultsView extends StatefulWidget {
   const ResultsView({super.key, required this.project, required this.onUndo, required this.onChanged});
   final Project project;
@@ -95,6 +96,16 @@ class _ResultsViewState extends State<ResultsView> {
     widget.onChanged();
   }
 
+  void _continue() {
+    if (p.stopped && !p.roundsOver) {
+      p.resume();
+    } else {
+      p.makeEndless();
+    }
+    AppScope.of(context).store.saveProject(p);
+    widget.onChanged();
+  }
+
   void _open(int index) async {
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => PickViewer(project: p, initial: index),
@@ -111,6 +122,14 @@ class _ResultsViewState extends State<ResultsView> {
     final supers = picks.where((i) => i.isSuperLike).length;
     final width = MediaQuery.sizeOf(context).width;
     final columns = (width / 130).floor().clamp(3, 8);
+    final round = p.currentRound;
+    final midRound = p.stopped && !p.roundsOver;
+    final unswiped = midRound ? p.remaining(round).length : 0;
+    final String? continueLabel = !p.canContinue
+        ? null
+        : midRound
+            ? (round <= p.startedRound ? 'Continue round $round' : 'Start round $round')
+            : 'Keep going · round $round';
 
     return Scaffold(
       appBar: AppBar(
@@ -150,6 +169,16 @@ class _ResultsViewState extends State<ResultsView> {
                     '${supers > 0 ? ' · ${plural(supers, 'Super Like')}' : ''}',
                     style: TextStyle(color: pal.muted, fontSize: 15),
                   ),
+                  if (p.stopped)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Stopped in round $round'
+                        '${unswiped > 0 ? ' · ${formatCount(unswiped)} not swiped yet' : ''}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: pal.muted, fontSize: 13.5),
+                      ),
+                    ),
                   if (widget.onUndo != null)
                     TextButton.icon(
                       onPressed: widget.onUndo,
@@ -157,6 +186,25 @@ class _ResultsViewState extends State<ResultsView> {
                       label: const Text('Undo last swipe'),
                     ),
                   const SizedBox(height: 14),
+                  if (continueLabel != null)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 520),
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _continue,
+                            icon: Icon(midRound ? Icons.play_arrow_rounded : Icons.all_inclusive_rounded),
+                            label: Text(continueLabel),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(50),
+                              shape: const StadiumBorder(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (picks.isNotEmpty)
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 520),
@@ -202,7 +250,10 @@ class _ResultsViewState extends State<ResultsView> {
                   if (picks.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 24),
-                      child: Text('No image passed all three rounds.', style: TextStyle(color: pal.muted)),
+                      child: Text(
+                        p.isEndless ? 'No image is left.' : 'No image passed all three rounds.',
+                        style: TextStyle(color: pal.muted),
+                      ),
                     ),
                 ],
               ),

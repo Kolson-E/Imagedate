@@ -39,8 +39,13 @@ class _InfoSheet extends StatelessWidget {
         ? '—'
         : MaterialLocalizations.of(context).formatMediumDate(DateTime.fromMillisecondsSinceEpoch(item.modified));
 
+    // Classic: rounds 1-3. Endless: every round so far.
+    final cur = project.currentRound;
+    final last = project.isEndless ? (cur > project.lastSwipedRound ? cur : project.lastSwipedRound) : kClassicRounds;
+    final rounds = last < 1 ? 1 : last;
+
     String decision(int r) {
-      final d = item.decisions[r];
+      final d = item.at(r + 1);
       if (r > 0 && item.isSuperLike) return 'Skipped (Super Like)';
       final inPool = project.pool(r + 1).contains(item);
       if (!inPool) return '—';
@@ -80,7 +85,7 @@ class _InfoSheet extends StatelessWidget {
             const SizedBox(height: 12),
             Text('Rounds', style: TextStyle(color: p.muted, fontSize: 13, fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            for (var r = 0; r < kRounds; r++) _Row('Round ${r + 1}', decision(r)),
+            for (var r = 0; r < rounds; r++) _Row('Round ${r + 1}', decision(r)),
           ],
         ),
       ),

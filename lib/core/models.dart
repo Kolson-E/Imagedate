@@ -89,7 +89,7 @@ class Item {
     this.size = 0,
     this.modified = 0,
     List<Decision?>? decisions,
-  }) : decisions = decisions ?? List<Decision?>.filled(3, null);
+  }) : decisions = decisions ?? <Decision?>[null, null, null];
 
   final int id;
   final String sourceId;
@@ -103,8 +103,18 @@ class Item {
   /// Milliseconds since epoch (file modified, or photo taken).
   final int modified;
 
-  /// Index 0, 1, 2 = round 1, 2, 3.
+  /// Index 0, 1, 2... = round 1, 2, 3... Grows in Endless mode.
   final List<Decision?> decisions;
+
+  /// Decision in [round] (1-based), or null.
+  Decision? at(int round) => round - 1 < decisions.length ? decisions[round - 1] : null;
+
+  void set(int round, Decision? d) {
+    while (decisions.length < round) {
+      decisions.add(null);
+    }
+    decisions[round - 1] = d;
+  }
 
   String get extension {
     final i = name.lastIndexOf('.');
@@ -134,7 +144,10 @@ class Item {
       name: j[4] as String,
       size: j[5] as int,
       modified: j[6] as int,
-      decisions: [for (var i = 0; i < 3; i++) Decision.fromCode(codes[i])],
+      decisions: [
+        for (var i = 0; i < (codes.length < 3 ? 3 : codes.length); i++)
+          i < codes.length ? Decision.fromCode(codes[i]) : null
+      ],
     );
   }
 }
@@ -146,9 +159,8 @@ class LastSwipe {
   final Decision decision;
 }
 
-/// Round number after the last round: the project is finished.
-const int kDoneRound = 4;
-const int kRounds = 3;
+/// Rounds in the classic mode.
+const int kClassicRounds = 3;
 
 class Project {
   Project({
@@ -158,6 +170,8 @@ class Project {
     required this.seed,
     this.sort = SortMode.shuffle,
     this.startedRound = 0,
+    this.maxRounds = kClassicRounds,
+    this.stopped = false,
     List<Source>? sources,
     List<Item>? items,
   })  : sources = sources ?? [],
@@ -174,6 +188,14 @@ class Project {
   /// The highest round the user has started (0 = none). When the current
   /// round is higher, the app shows the round's title screen first.
   int startedRound;
+
+  /// 3 for the classic mode; null for Endless mode (rounds go on until you stop).
+  int? maxRounds;
+
+  /// The user stopped and looks at the picks so far. "Continue" clears it.
+  bool stopped;
+
+  bool get isEndless => maxRounds == null;
 
   final List<Source> sources;
   final List<Item> items;
@@ -198,75 +220,132 @@ class Project {
     return null;
   }
 
-  /// The images that take part in [round] (1-3).
+  /// The images that take part in [round]: all images in round 1, then only
+  /// the images kept in the round before. Super Likes leave after round 1.
   Iterable<Item> pool(int round) {
-    switch (round) {
-      case 1:
-        return items;
-      case 2:
-        return items.where((i) => i.decisions[0] == Decision.keep);
-      case 3:
-        return items.where((i) => i.decisions[1] == Decision.keep);
-    }
-    return const [];
+    if (round <= 1) return items;
+    return items.where((i) => i.at(round - 1) == Decision.keep);
   }
 
   /// Images in [round] that have no decision yet, in the project's sort order.
   List<Item> remaining(int round) {
-    final list = pool(round).where((i) => i.decisions[round - 1] == null).toList();
+    final list = pool(round).where((i) => i.at(round) == null).toList();
     sortItems(list, sort, seed: seed, round: round);
     return list;
   }
 
-  /// 1-3, or [kDoneRound] when all rounds are complete.
+  /// The round in front: the first round that still has images to swipe.
+  /// When the rounds are over, it is the round after the last one; its pool
+  /// is the set of survivors.
   int get currentRound {
-    for (var r = 1; r <= kRounds; r++) {
-      if (pool(r).any((i) => i.decisions[r - 1] == null)) return r;
+    var r = 1;
+    while (true) {
+      final pool = this.pool(r);
+      if (pool.isEmpty) return r;
+      if (pool.any((i) => i.at(r) == null)) return r;
+      final max = maxRounds;
+      if (max != null && r >= max) return r + 1;
+      r++;
     }
-    return kDoneRound;
   }
 
-  bool get isDone => currentRound == kDoneRound;
+  /// No round is left to swipe: the last classic round is complete, or no
+  /// image is left in the running.
+  bool get roundsOver {
+    final r = currentRound;
+    final max = maxRounds;
+    if (max != null && r > max) return true;
+    return !pool(r).any((i) => i.at(r) == null);
+  }
 
-  /// Super likes from round 1 plus the images kept in round 3.
-  List<Item> get picks => items
-      .where((i) => i.decisions[0] == Decision.superLike || i.decisions[2] == Decision.keep)
-      .toList();
+  /// The picks screen shows: the user stopped, or no round is left.
+  bool get isDone => stopped || roundsOver;
+
+  /// Super Likes plus the images still in the running: in the current round,
+  /// every image not passed yet (kept or not swiped yet).
+  List<Item> get picks {
+    final r = currentRound;
+    final alive = pool(r).where((i) => i.at(r) != Decision.reject).toSet();
+    return items.where((i) => i.isSuperLike || alive.contains(i)).toList();
+  }
 
   int get superLikeCount => items.where((i) => i.isSuperLike).length;
 
+  /// The last round in which the user swiped at least one image (0 = none).
+  int get lastSwipedRound {
+    var r = 0;
+    for (final i in items) {
+      for (var k = i.decisions.length; k > r; k--) {
+        if (i.decisions[k - 1] != null) {
+          r = k;
+          break;
+        }
+      }
+    }
+    return r;
+  }
+
   /// Records a decision. Throws if it is not allowed.
   void decide(Item item, int round, Decision decision) {
-    if (round < 1 || round > kRounds) throw ArgumentError('round $round');
+    final max = maxRounds;
+    if (round < 1 || (max != null && round > max)) throw ArgumentError('round $round');
     if (decision == Decision.superLike && round != 1) {
       throw ArgumentError('Super Like is only for round 1');
     }
     if (!pool(round).contains(item)) throw StateError('Item not in round $round');
-    item.decisions[round - 1] = decision;
+    item.set(round, decision);
     lastSwipe = LastSwipe(item.id, round, decision);
   }
 
   /// Takes back the last swipe. Returns the item, or null if there is nothing to undo.
+  /// Undo after "Stop" also continues the rounds.
   Item? undo() {
     final last = lastSwipe;
     if (last == null) return null;
     final item = itemById(last.itemId);
     lastSwipe = null;
     if (item == null) return null;
-    item.decisions[last.round - 1] = null;
-    // A later round cannot have decisions for this item, but clear them to be safe.
-    for (var r = last.round; r < kRounds; r++) {
-      item.decisions[r] = null;
+    for (var r = last.round; r <= item.decisions.length; r++) {
+      item.decisions[r - 1] = null;
     }
+    stopped = false;
     return item;
   }
 
-  /// Takes an image out of the final picks (from the results screen).
+  /// Stops the rounds and shows the picks so far.
+  void stop() {
+    stopped = true;
+  }
+
+  /// Goes back to swiping after [stop].
+  void resume() {
+    stopped = false;
+  }
+
+  /// A classic project continues as Endless: round 4, 5... follow.
+  void makeEndless() {
+    maxRounds = null;
+    stopped = false;
+    lastSwipe = null;
+  }
+
+  /// True when "Continue" or "Keep going" has images to show.
+  bool get canContinue {
+    if (!stopped && !roundsOver) return false;
+    final r = currentRound;
+    final undecided = pool(r).any((i) => i.at(r) == null);
+    if (undecided && (maxRounds == null || r <= maxRounds!)) return true;
+    // Classic project with survivors: it can become Endless.
+    return maxRounds != null && r > maxRounds! && pool(r).isNotEmpty;
+  }
+
+  /// Takes an image out of the picks (from the picks screen).
   void removeFromPicks(Item item) {
-    if (item.decisions[0] == Decision.superLike) {
-      item.decisions[0] = Decision.reject;
-    } else if (item.decisions[2] == Decision.keep) {
-      item.decisions[2] = Decision.reject;
+    if (item.isSuperLike) {
+      item.set(1, Decision.reject);
+    } else {
+      final r = currentRound;
+      if (pool(r).contains(item)) item.set(r, Decision.reject);
     }
     lastSwipe = null;
   }
@@ -274,11 +353,12 @@ class Project {
   /// Clears all decisions. The images stay.
   void restart() {
     for (final i in items) {
-      for (var r = 0; r < kRounds; r++) {
-        i.decisions[r] = null;
-      }
+      i.decisions
+        ..clear()
+        ..addAll([null, null, null]);
     }
     startedRound = 0;
+    stopped = false;
     lastSwipe = null;
   }
 
@@ -293,6 +373,8 @@ class Project {
         'seed': seed,
         'sort': sort.name,
         'started': startedRound,
+        'rounds': maxRounds,
+        'stopped': stopped,
         'sources': sources.map((s) => s.toJson()).toList(),
         'items': items.map((i) => i.toJson()).toList(),
       };
@@ -304,6 +386,8 @@ class Project {
         seed: j['seed'] as int,
         sort: SortMode.values.asNameMap()[j['sort']] ?? SortMode.shuffle,
         startedRound: j['started'] as int? ?? 0,
+        maxRounds: j.containsKey('rounds') ? j['rounds'] as int? : kClassicRounds,
+        stopped: j['stopped'] as bool? ?? false,
         sources: [
           for (final s in (j['sources'] as List? ?? const [])) Source.fromJson(s as Map<String, dynamic>)
         ],

@@ -122,6 +122,15 @@ class _ProjectScreenState extends State<ProjectScreen> {
     store.saveProject(p);
   }
 
+  /// Stops the rounds and shows what is still in the running.
+  void _stop() {
+    setState(() {
+      p.stop();
+      _pinnedId = null;
+    });
+    _store.saveProject(p);
+  }
+
   void _start(int round) {
     setState(() => p.startedRound = round);
     AppScope.of(context).store.saveProject(p);
@@ -143,7 +152,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
   void _info(Item item) => showInfoSheet(context, p, item);
 
   /// Keyboard: ← nope, → keep, ↑ Super Like (round 1), Ctrl+Z or Backspace
-  /// undo, Space or Z zoom, I info, Esc back. Returns true when handled.
+  /// undo, Space or Z zoom, I info, S stop and review, Esc back.
+  /// Returns true when handled.
   bool _onKey(KeyEvent e) {
     if (e is! KeyDownEvent && e is! KeyRepeatEvent) return false;
     // Only when this screen is on top (no sheet, dialog or other screen) and
@@ -154,7 +164,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
     // Holding an arrow key does not swipe card after card.
     final repeat = e is KeyRepeatEvent;
     final round = p.currentRound;
-    final onDeck = round <= kRounds && round <= p.startedRound;
+    final done = p.isDone;
+    final onDeck = !done && round <= p.startedRound;
     final k = e.logicalKey;
     final ctrl = HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed;
     if (k == LogicalKeyboardKey.escape) {
@@ -166,11 +177,20 @@ class _ProjectScreenState extends State<ProjectScreen> {
       return true;
     }
     if (!onDeck) {
-      if (round <= kRounds && (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.space)) {
+      if (done) return false;
+      if (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.space) {
         _start(round);
         return true;
       }
+      if (k == LogicalKeyboardKey.keyS && round > 1) {
+        _stop();
+        return true;
+      }
       return false;
+    }
+    if (k == LogicalKeyboardKey.keyS) {
+      _stop();
+      return true;
     }
     final deck = _deck.currentState;
     final isArrow = k == LogicalKeyboardKey.arrowLeft ||
@@ -212,7 +232,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
     }
     if (p.items.isEmpty) return _EmptyProject(project: p, onAdd: _addImages);
     final round = p.currentRound;
-    if (round == kDoneRound) {
+    if (p.isDone) {
       return ResultsView(
         project: p,
         onUndo: p.lastSwipe == null ? null : _undo,
@@ -225,6 +245,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
         round: round,
         onStart: () => _start(round),
         onOrder: _chooseOrder,
+        onStop: round > 1 ? _stop : null,
       );
     }
     return _deckScreen(context, round);
@@ -251,11 +272,13 @@ class _ProjectScreenState extends State<ProjectScreen> {
     final top = _TopBar(
       title: 'Round $round',
       onBack: () => Navigator.of(context).maybePop(),
+      onStop: _stop,
       menu: _menu(context),
       overImage: landscape,
     );
     final actions = _ActionBar(
       round: round,
+      endless: p.isEndless,
       canUndo: p.lastSwipe != null,
       compact: landscape,
       onUndo: _undo,
@@ -332,6 +355,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
             _chooseOrder();
           case 'add':
             _addImages();
+          case 'stop':
+            _stop();
           case 'settings':
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
         }
@@ -344,6 +369,10 @@ class _ProjectScreenState extends State<ProjectScreen> {
             title: const Text('Order'),
             subtitle: Text(p.sort.label),
           ),
+        ),
+        const PopupMenuItem(
+          value: 'stop',
+          child: ListTile(leading: Icon(Icons.flag_rounded), title: Text('Stop and review (S)')),
         ),
         if (p.canAddImages)
           const PopupMenuItem(
@@ -362,9 +391,16 @@ class _ProjectScreenState extends State<ProjectScreen> {
 // ------------------------------------------------------------------ pieces
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.title, required this.onBack, required this.menu, required this.overImage});
+  const _TopBar({
+    required this.title,
+    required this.onBack,
+    required this.onStop,
+    required this.menu,
+    required this.overImage,
+  });
   final String title;
   final VoidCallback onBack;
+  final VoidCallback onStop;
   final Widget menu;
   final bool overImage;
 
@@ -382,12 +418,19 @@ class _TopBar extends StatelessWidget {
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
             ),
+            // Balances the two buttons on the right so the title stays centered.
+            const SizedBox(width: 48),
             Expanded(
               child: Text(
                 title,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.w700),
               ),
+            ),
+            IconButton(
+              tooltip: 'Stop and review (S)',
+              onPressed: onStop,
+              icon: const Icon(Icons.flag_rounded),
             ),
             menu,
           ],
@@ -420,6 +463,7 @@ class _Scrim extends StatelessWidget {
 class _ActionBar extends StatelessWidget {
   const _ActionBar({
     required this.round,
+    required this.endless,
     required this.canUndo,
     required this.compact,
     required this.onUndo,
@@ -430,6 +474,7 @@ class _ActionBar extends StatelessWidget {
   });
 
   final int round;
+  final bool endless;
   final bool canUndo;
   final bool compact;
   final VoidCallback onUndo;
@@ -469,7 +514,9 @@ class _ActionBar extends StatelessWidget {
               size: mid,
               icon: Icons.star_rounded,
               color: const Color(0xFF3BA7FF),
-              tooltip: 'Super Like: keep for sure, skip rounds 2 and 3 (↑)',
+              tooltip: endless
+                  ? 'Super Like: keep for sure, skip all later rounds (↑)'
+                  : 'Super Like: keep for sure, skip rounds 2 and 3 (↑)',
               onPressed: onSuper,
             ),
           ],
@@ -589,20 +636,41 @@ class _MissingBanner extends StatelessWidget {
 }
 
 class _RoundIntro extends StatelessWidget {
-  const _RoundIntro({required this.project, required this.round, required this.onStart, required this.onOrder});
+  const _RoundIntro({
+    required this.project,
+    required this.round,
+    required this.onStart,
+    required this.onOrder,
+    required this.onStop,
+  });
   final Project project;
   final int round;
   final VoidCallback onStart;
   final VoidCallback onOrder;
+  final VoidCallback? onStop;
+
+  String get _hint {
+    if (!project.isEndless) {
+      return switch (round) {
+        1 => 'Swipe right to keep, left to pass.\nSwipe up to Super Like.\nA Super Like skips rounds 2 and 3.',
+        2 => 'Only the images you kept.\nSwipe again.',
+        _ => 'Last round.\nWhat you keep now is final.',
+      };
+    }
+    if (round == 1) {
+      return 'Swipe right to keep, left to pass.\nSwipe up to Super Like.\n'
+          'A Super Like skips all later rounds.\nRounds go on until you tap Stop.';
+    }
+    final now = project.pool(round).length;
+    final before = project.pool(round - 1).length;
+    final same = now == before ? '\nYou kept every image in round ${round - 1}.' : '';
+    return '${plural(now, 'image')} left.$same\nSwipe again, or stop and review.';
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    final hint = switch (round) {
-      1 => 'Swipe right to keep, left to pass.\nSwipe up to Super Like.\nA Super Like skips rounds 2 and 3.',
-      2 => 'Only the images you kept.\nSwipe again.',
-      _ => 'Last round.\nWhat you keep now is final.',
-    };
+    final hint = _hint;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -621,7 +689,19 @@ class _RoundIntro extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _RoundDots(round: round),
+                  if (project.isEndless)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.all_inclusive_rounded, size: 18, color: p.muted),
+                        const SizedBox(width: 6),
+                        Text('ENDLESS',
+                            style: TextStyle(
+                                color: p.muted, fontSize: 12.5, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                      ],
+                    )
+                  else
+                    _RoundDots(round: round, total: project.maxRounds!),
                   const SizedBox(height: 22),
                   GradientText('Round $round',
                       style: const TextStyle(fontSize: 54, fontWeight: FontWeight.w900, height: 1.05)),
@@ -640,6 +720,14 @@ class _RoundIntro extends StatelessWidget {
                   ),
                   const SizedBox(height: 28),
                   SizedBox(width: double.infinity, child: BrandButton(label: 'Start', onPressed: onStart)),
+                  if (onStop != null) ...[
+                    const SizedBox(height: 10),
+                    TextButton.icon(
+                      onPressed: onStop,
+                      icon: const Icon(Icons.flag_rounded, size: 18),
+                      label: const Text('Stop and review'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -651,8 +739,9 @@ class _RoundIntro extends StatelessWidget {
 }
 
 class _RoundDots extends StatelessWidget {
-  const _RoundDots({required this.round});
+  const _RoundDots({required this.round, required this.total});
   final int round;
+  final int total;
 
   @override
   Widget build(BuildContext context) {
@@ -660,7 +749,7 @@ class _RoundDots extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (var r = 1; r <= kRounds; r++)
+        for (var r = 1; r <= total; r++)
           AnimatedContainer(
             duration: const Duration(milliseconds: 250),
             margin: const EdgeInsets.symmetric(horizontal: 4),

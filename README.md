@@ -2,8 +2,8 @@
 
 # Image Date
 
-Swipe through a folder of images like a dating app, three times. What is left is the set you
-really like.
+Swipe through a folder of images like a dating app, three times (or as many times as you want).
+What is left is the set you really like.
 
 - **Right** = keep. **Left** = pass. **Up** = Super Like (round 1 only).
 - **Round 1** shows all images. **Round 2** shows only the images you kept in round 1.
@@ -11,6 +11,8 @@ really like.
 - A **Super Like** means "I want this for sure". The image goes straight to the final set and
   skips rounds 2 and 3.
 - **Final set** = Super Likes + images kept in round 3. Example: 1,000 → 250 → 200 → 185.
+- **Endless** mode: the rounds do not stop at 3. Each round shows the images you kept in the round
+  before, until you tap **Stop**. Example: 1,000 → 250 → 200 → 120 → 60 → 40 · Stop.
 
 Image Date runs on iPhone and Windows. It works offline: no account, no server, no analytics.
 It never deletes or moves your images.
@@ -26,12 +28,31 @@ It never deletes or moves your images.
 | Zoom | Pinch, or double-tap | Mouse wheel, double-click, Space or Z |
 | See the whole image | Press and hold the card | Press and hold the card |
 | Image info | ⓘ | ⓘ or I |
+| Stop and review | ⚑ | ⚑ or S |
 | Hide the buttons (sideways) | Tap the image | Click the image |
 
 Only the last swipe can be undone.
 
 **Projects.** Each project has its own images and its own progress. You can have many projects
 at the same time. The app saves after each swipe, so you can stop at any time and continue later.
+
+**3 rounds or Endless.** Choose on the New project screen.
+
+| | 3 rounds | Endless |
+|---|---|---|
+| Rounds | 1, 2, 3, then the final set | 1, 2, 3, 4... until you stop |
+| Super Like | Skips rounds 2 and 3 | Skips all later rounds |
+| End | After round 3, or when no image is left | When you tap Stop, or when no image is left |
+
+**Stop and review** (⚑ on the swipe screen, ⋯ menu, the round screen, or S) works in both modes,
+also in the middle of a round. It opens the picks screen with every image still in the running:
+the Super Likes, the images you kept in this round, and the images you did not swipe yet in this
+round. From there:
+
+- **Continue round N** goes back to the cards where you stopped.
+- **Keep going · round 4** (a finished 3-round project) turns the project into Endless and starts
+  round 4 with your final set.
+- Export, or remove images from the picks, as at the end.
 
 **Adding images.** New project › Add images from:
 
@@ -136,7 +157,7 @@ flutter build ios --no-codesign   # on a Mac
 
 | Path | What |
 |---|---|
-| `lib/core/` | Data model, the three-round rules, sort orders, storage. No Flutter UI. |
+| `lib/core/` | Data model, the round rules (3 rounds and Endless), sort orders, storage. No Flutter UI. |
 | `lib/platform/` | Image loading (downsampled to screen size), imports, export, iOS channel. |
 | `lib/ui/` | Screens. `ui/swipe/swipe_deck.dart` is the card stack and its gestures. |
 | `ios/Runner/AppDelegate.swift` | Native iOS part: Files folder picker with bookmarks, iCloud downloads, HEIC/AVIF decoding through ImageIO. |
