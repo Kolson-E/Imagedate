@@ -24,7 +24,6 @@ class ProjectScreen extends StatefulWidget {
 
 class _ProjectScreenState extends State<ProjectScreen> {
   final _deck = GlobalKey<SwipeDeckState>();
-  final _focus = FocusNode(debugLabel: 'deck');
   late final ShakeDetector _shake = ShakeDetector(_undo);
   bool _opened = false;
   List<Source> _missing = const [];
@@ -37,6 +36,8 @@ class _ProjectScreenState extends State<ProjectScreen> {
   void initState() {
     super.initState();
     _open();
+    // Keys work on this screen whatever widget has focus (Windows/keyboard).
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   late AppStore _store;
@@ -51,7 +52,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
   @override
   void dispose() {
     _shake.stop();
-    _focus.dispose();
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _store.saveProjectNow(p);
     super.dispose();
   }
@@ -124,7 +125,6 @@ class _ProjectScreenState extends State<ProjectScreen> {
   void _start(int round) {
     setState(() => p.startedRound = round);
     AppScope.of(context).store.saveProject(p);
-    _focus.requestFocus();
   }
 
   Future<void> _chooseOrder() async {
@@ -142,28 +142,41 @@ class _ProjectScreenState extends State<ProjectScreen> {
 
   void _info(Item item) => showInfoSheet(context, p, item);
 
-  KeyEventResult _onKey(FocusNode node, KeyEvent e) {
-    if (e is! KeyDownEvent && e is! KeyRepeatEvent) return KeyEventResult.ignored;
+  /// Keyboard: ← nope, → keep, ↑ Super Like (round 1), Ctrl+Z or Backspace
+  /// undo, Space or Z zoom, I info, Esc back. Returns true when handled.
+  bool _onKey(KeyEvent e) {
+    if (e is! KeyDownEvent && e is! KeyRepeatEvent) return false;
+    // Only when this screen is on top (no sheet, dialog or other screen) and
+    // no text field is being typed in.
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return false;
+    final focused = FocusManager.instance.primaryFocus?.context?.widget;
+    if (focused is EditableText) return false;
+    // Holding an arrow key does not swipe card after card.
+    final repeat = e is KeyRepeatEvent;
     final round = p.currentRound;
     final onDeck = round <= kRounds && round <= p.startedRound;
     final k = e.logicalKey;
     final ctrl = HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed;
     if (k == LogicalKeyboardKey.escape) {
       Navigator.of(context).maybePop();
-      return KeyEventResult.handled;
+      return true;
     }
     if ((ctrl && k == LogicalKeyboardKey.keyZ) || k == LogicalKeyboardKey.backspace) {
       _undo();
-      return KeyEventResult.handled;
+      return true;
     }
     if (!onDeck) {
       if (round <= kRounds && (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.space)) {
         _start(round);
-        return KeyEventResult.handled;
+        return true;
       }
-      return KeyEventResult.ignored;
+      return false;
     }
     final deck = _deck.currentState;
+    final isArrow = k == LogicalKeyboardKey.arrowLeft ||
+        k == LogicalKeyboardKey.arrowRight ||
+        k == LogicalKeyboardKey.arrowUp;
+    if (isArrow && repeat) return true;
     if (k == LogicalKeyboardKey.arrowLeft) {
       deck?.swipe(Decision.reject);
     } else if (k == LogicalKeyboardKey.arrowRight) {
@@ -176,9 +189,9 @@ class _ProjectScreenState extends State<ProjectScreen> {
     } else if (k == LogicalKeyboardKey.keyZ || k == LogicalKeyboardKey.space) {
       deck?.toggleZoom();
     } else {
-      return KeyEventResult.ignored;
+      return false;
     }
-    return KeyEventResult.handled;
+    return true;
   }
 
   @override
@@ -188,12 +201,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
       listenable: scope.store,
       builder: (context, _) {
         _updateShake();
-        return Focus(
-          focusNode: _focus,
-          autofocus: true,
-          onKeyEvent: _onKey,
-          child: _body(context),
-        );
+        return _body(context);
       },
     );
   }

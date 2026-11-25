@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_date/core/models.dart';
@@ -114,6 +115,54 @@ void main() {
     expect(find.text('1 pick'), findsOneWidget);
     expect(find.text('Undo last swipe'), findsOneWidget);
 
+    await store.flush();
+  });
+
+  testWidgets('arrow keys swipe even when another widget has focus, but not under a sheet', (t) async {
+    t.view.physicalSize = const Size(2400, 1600);
+    t.view.devicePixelRatio = 1.5;
+    addTearDown(t.view.reset);
+
+    await t.pumpWidget(ImageDateApp(store: store, library: Library(store)));
+    await settle(t);
+    await t.tap(find.text('Walls'));
+    await settle(t);
+    await t.sendKeyEvent(LogicalKeyboardKey.enter); // Start round 1 from the keyboard
+    await settle(t);
+    expect(find.byType(SwipeDeck), findsOneWidget);
+
+    // Move keyboard focus to the "More" button, as a mouse click can do.
+    final more = find.byTooltip('More');
+    Focus.of(t.element(find.descendant(of: more, matching: find.byType(Icon)))).requestFocus();
+    await t.pump();
+
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await settle(t);
+    expect(project.itemById(1)!.decisions[0], Decision.keep);
+
+    // A held key swipes one card only.
+    await t.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);
+    await t.sendKeyRepeatEvent(LogicalKeyboardKey.arrowLeft);
+    await t.sendKeyRepeatEvent(LogicalKeyboardKey.arrowLeft);
+    await t.sendKeyUpEvent(LogicalKeyboardKey.arrowLeft);
+    await settle(t);
+    expect(project.itemById(2)!.decisions[0], Decision.reject);
+    expect(project.itemById(3)!.decisions[0], isNull);
+
+    // With the info sheet open, arrows do not swipe.
+    await t.sendKeyEvent(LogicalKeyboardKey.keyI);
+    await settle(t);
+    expect(find.text('wall3.jpg'), findsOneWidget);
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await settle(t);
+    expect(project.itemById(3)!.decisions[0], isNull);
+
+    // Close the sheet; the up arrow now gives a Super Like.
+    await t.tapAt(const Offset(20, 20));
+    await settle(t);
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await settle(t);
+    expect(project.itemById(3)!.decisions[0], Decision.superLike);
     await store.flush();
   });
 }
