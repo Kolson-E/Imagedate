@@ -1,0 +1,133 @@
+name: Build apps
+
+# Builds Image Date for iPhone (ImageDate.ipa, for AltStore or SideStore) and for
+# Windows (ImageDate-Windows.zip), and puts both on the release "latest" of this repository.
+# Runs on every push, and by hand: Actions › Build apps › Run workflow.
+# Install steps: README › "Install on iPhone (AltStore)" and "Install on Windows".
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.9'
+
+jobs:
+  test:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  ios:
+    name: iPhone (.ipa)
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: .github/scripts/select_newest_xcode.sh 16
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build for iPhone (Release, not signed)
+        run: flutter build ios --release --no-codesign --build-number "$(date -u +%Y%m%d%H%M)"
+      - name: Make the .ipa
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphoneos/Runner.app
+          test -d "$APP"
+          # AltStore replaces this ad-hoc signature with one from your Apple ID.
+          if [ -d "$APP/Frameworks" ]; then
+            find "$APP/Frameworks" -maxdepth 1 \( -name "*.framework" -o -name "*.dylib" \) -exec codesign --force --sign - {} \;
+          fi
+          codesign --force --sign - "$APP"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP/Info.plist"
+          mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry ../ImageDate.ipa Payload)
+          ls -lh ImageDate.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImageDate-ipa
+          path: ImageDate.ipa
+          retention-days: 30
+
+  windows:
+    name: Windows (.zip)
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - name: Make the .zip
+        shell: pwsh
+        run: |
+          $out = "build/windows/x64/runner/Release"
+          if (-not (Test-Path "$out/ImageDate.exe")) { throw "ImageDate.exe not found" }
+          New-Item -ItemType Directory -Force -Path "dist/Image Date" | Out-Null
+          Copy-Item -Recurse -Force "$out/*" "dist/Image Date/"
+          Compress-Archive -Path "dist/Image Date" -DestinationPath "ImageDate-Windows.zip" -Force
+          Get-Item ImageDate-Windows.zip | Select-Object Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImageDate-Windows
+          path: ImageDate-Windows.zip
+          retention-days: 30
+
+  release:
+    name: Put the apps on the "latest" release
+    needs: [ios, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -lh ImageDate.ipa ImageDate-Windows.zip
+          TAG=latest
+          NOTES="Image Date, built $(date -u '+%Y-%m-%d %H:%M UTC') from ${GITHUB_SHA::7} (${GITHUB_REF_NAME}).
+
+          iPhone: download ImageDate.ipa on the phone, then AltStore › My Apps › + and pick the file.
+          Windows: download ImageDate-Windows.zip, unzip it, and open ImageDate.exe.
+          Full steps: README of this repository."
+          # Make the release again so its tag points at this build's commit.
+          gh release delete "$TAG" --cleanup-tag --yes > /dev/null 2>&1 || true
+          gh release create "$TAG" ImageDate.ipa ImageDate-Windows.zip --target "$GITHUB_SHA" \
+            --title "Image Date" --notes "$NOTES" --latest
+          echo "::notice::Apps are on $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
